@@ -1,2 +1,3 @@
 # rf-playground
-A place for playing around with rf signals.
+
+Place for playing around with radio signals.
