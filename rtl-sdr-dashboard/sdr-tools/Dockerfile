@@ -43,6 +43,10 @@ RUN mkdir -p /var/run/sdr /tmp/hls
 # Blacklist conflicting kernel modules (document only - actual blacklisting must be done on host)
 # echo "blacklist dvb_usb_rtl28xxu" >> /etc/modprobe.d/rtlsdr.conf
 
-EXPOSE 1234
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
 
-CMD ["rtl_tcp", "-a", "0.0.0.0", "-p", "1234"]
+# 1234 = rtl_tcp SDR stream, 8080 = health-check endpoint
+EXPOSE 1234 8080
+
+CMD ["/start.sh"]

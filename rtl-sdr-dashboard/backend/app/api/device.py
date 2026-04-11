@@ -10,9 +10,14 @@ router = APIRouter(tags=["device"])
 
 @router.get("/device/status")
 async def device_status():
-    """Check device availability by probing the rtl_tcp socket on the sdr-tools container."""
+    """Check device availability by probing the health-check port on the sdr-tools container.
+
+    We probe port 8080 (a tiny HTTP server in start.sh) rather than port 1234 (rtl_tcp)
+    because rtl_tcp exits whenever a TCP client disconnects — probing it directly would
+    kill the SDR server on every status poll.
+    """
     host = settings.RTL_TCP_HOST
-    port = settings.RTL_TCP_PORT
+    port = settings.RTL_TCP_HEALTH_PORT
     try:
         loop = asyncio.get_running_loop()
         conn = await asyncio.wait_for(
