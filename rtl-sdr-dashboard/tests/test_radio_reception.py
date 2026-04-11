@@ -163,28 +163,31 @@ def test_device_can_sample():
     """
     Verify that the RTL-SDR dongle can produce raw IQ samples.
 
-    Runs ``rtl_test -s 2048000 -n 100`` which captures exactly 100 × 512-byte
-    blocks (≈ 51 200 bytes) and reports the sample rate accuracy.  The test
-    passes when the output contains the expected "Samples per block" line,
-    confirming the USB transfer pipeline is working.
+    Runs ``rtl_test -s 2048000 -p 2`` which starts a 2-second PPM error
+    measurement at 2 048 000 S/s.  The test passes when the output contains
+    "Sampling at", confirming that the USB transfer pipeline is working and
+    the device has been opened successfully.
 
     This is the lowest-level sanity check — if this fails, all RF tests will
     also fail regardless of signal strength.
+
+    Note: the ``-n`` (block-count) option is not available in all rtl-sdr
+    builds (it was removed in newer versions), so ``-p`` is used instead.
     """
     _require_binary("rtl_test")
 
     # rtl_test talks to the USB dongle directly and does not support the
     # rtl_tcp:: device format, so we always pass the numeric device index here.
     result = subprocess.run(
-        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-s", "2048000", "-n", "100"],
+        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-s", "2048000", "-p", "2"],
         capture_output=True,
         text=True,
         timeout=15,
     )
     combined = result.stdout + result.stderr
 
-    assert "Samples per block" in combined or "samples" in combined.lower(), (
-        "rtl_test did not report any sample data — the dongle may be malfunctioning "
+    assert "Sampling at" in combined, (
+        "rtl_test did not start sampling — the dongle may be malfunctioning "
         "or the USB driver is not working correctly.\n"
         f"rtl_test output:\n{combined}"
     )
