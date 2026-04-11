@@ -11,10 +11,6 @@ const PRESETS = [
 
 const API = import.meta.env.VITE_API_URL ?? '/api'
 
-// Time to wait for the backend HLS pipeline to produce the first segments
-// before attempting to load the playlist (rtl_fm → sox → ffmpeg startup delay)
-const HLS_STREAM_STARTUP_DELAY_MS = 5000
-
 export default function RadioPlayer() {
   const audioRef = useRef<HTMLAudioElement>(null)
   const hlsRef = useRef<Hls | null>(null)
@@ -37,9 +33,26 @@ export default function RadioPlayer() {
     fetch(`${API}/audio/start?frequency_hz=${freqHz}`, { method: 'POST' })
       .then(() => {
         setStatus('Starting HLS stream…')
-        setTimeout(attachHls, HLS_STREAM_STARTUP_DELAY_MS)
+        pollUntilReady()
       })
       .catch(() => setStatus('Failed to start stream'))
+  }
+
+  function pollUntilReady(attempts = 0) {
+    if (attempts > 20) {
+      setStatus('Stream unavailable')
+      return
+    }
+    fetch(`${API}/audio/status`)
+      .then((r) => r.json())
+      .then((json: { hls_available: boolean }) => {
+        if (json.hls_available) {
+          attachHls()
+        } else {
+          setTimeout(() => pollUntilReady(attempts + 1), 1000)
+        }
+      })
+      .catch(() => setTimeout(() => pollUntilReady(attempts + 1), 1000))
   }
 
   function attachHls() {

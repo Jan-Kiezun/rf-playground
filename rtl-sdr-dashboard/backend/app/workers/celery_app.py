@@ -1,4 +1,7 @@
+import re
+
 from celery import Celery
+from celery.schedules import timedelta
 
 from app.config import settings
 
@@ -14,7 +17,40 @@ celery_app.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    beat_schedule={
+        "dispatch-enabled-connectors": {
+            "task": "dispatch_enabled_connectors",
+            # Workers run for 60 s; fire every 90 s so they finish before the next wave.
+            "schedule": timedelta(seconds=90),
+        },
+    },
 )
+
+
+@celery_app.task(name="dispatch_enabled_connectors")
+def dispatch_enabled_connectors():
+    """Query all enabled connectors and dispatch a pull task for each one.
+
+    Uses psycopg2 (sync) because Celery tasks are synchronous.
+    The DATABASE_URL may use the asyncpg driver prefix; we swap it for the
+    psycopg2-compatible postgresql:// scheme before connecting.
+    """
+    import psycopg2
+
+    db_url = re.sub(r"^postgresql\+asyncpg://", "postgresql://", settings.DATABASE_URL)
+    conn = psycopg2.connect(db_url)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT id, protocol FROM connectors WHERE enabled = TRUE")
+        rows = cur.fetchall()
+        cur.close()
+    finally:
+        conn.close()
+
+    for connector_id, protocol in rows:
+        trigger_pull.delay(str(connector_id), protocol)
+
+    return {"dispatched": len(rows)}
 
 
 @celery_app.task(name="trigger_pull")
