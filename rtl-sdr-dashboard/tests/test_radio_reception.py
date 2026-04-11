@@ -273,7 +273,13 @@ def test_rds_decoding_rmf_fm():
     seconds and checks that at least one ``RDS:`` line appears in the output.
     RDS data bursts every ~87 ms, so within 30 s on a strong signal there
     should always be output.
+
+    The reader runs in a daemon thread so that the deadline is always
+    honoured.  ``readline()`` is a blocking call — without a thread the
+    deadline check is never reached while waiting for the next line.
     """
+    import threading
+
     _require_binary("rtl_fm")
     _require_binary("multimon-ng")
 
@@ -307,17 +313,18 @@ def test_rds_decoding_rmf_fm():
         pytest.skip(f"Required binary not found: {exc}")
 
     rds_lines: list[str] = []
-    deadline = time.monotonic() + duration
 
-    try:
-        while time.monotonic() < deadline:
-            line = mm_proc.stdout.readline()
-            if not line:
-                break
+    def _reader() -> None:
+        for line in mm_proc.stdout:
             line = line.strip()
             if line.startswith("RDS:"):
                 rds_lines.append(line)
-                break  # one line is enough — pass early
+                break  # one line is enough — stop early
+
+    reader = threading.Thread(target=_reader, daemon=True)
+    reader.start()
+    try:
+        reader.join(timeout=duration)
     finally:
         rtl_proc.terminate()
         mm_proc.terminate()
