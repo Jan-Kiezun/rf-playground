@@ -158,6 +158,104 @@ docker compose exec sdr-tools rtl_test -t
 - Start the stream from the Radio Player page
 - HLS segments appear in `/tmp/hls/` after ~10 seconds
 
+## Radio Reception Tests
+
+The `tests/` directory contains a pytest suite that verifies FM broadcast
+reception end-to-end.  The tests connect to your RTL-SDR dongle (via
+`rtl_tcp`) and check that real stations return usable audio — useful for
+diagnosing whether problems are in the hardware/driver layer or in the
+application code.
+
+### Stations tested
+
+| Station | Frequency |
+|---|---|
+| Radio Gdańsk | 103.7 MHz |
+| RMF FM | 98.4 MHz |
+| Radio ZET | 105.0 MHz |
+| Radio Maryja | 88.9 MHz |
+
+### Prerequisites
+
+You need the following installed on the **host machine** (not inside Docker)
+where you run the tests:
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install rtl-sdr sox ffmpeg multimon-ng python3-pip
+
+# Arch Linux
+sudo pacman -S rtl-sdr sox ffmpeg multimon-ng python-pip
+```
+
+The RTL-SDR dongle must be attached and `rtl_tcp` must be running so the
+tests can reach it.  The easiest way is to start the full stack first:
+
+```bash
+cd rtl-sdr-dashboard
+docker compose up -d          # starts rtl_tcp on port 1234 (via sdr-tools)
+```
+
+If you prefer to run `rtl_tcp` directly on the host instead:
+
+```bash
+rtl_tcp -a 0.0.0.0 -p 1234
+```
+
+### Running the tests
+
+```bash
+# 1. Install test dependencies
+pip install -r tests/requirements-test.txt
+
+# 2. Run all radio reception tests (uses localhost:1234 by default)
+pytest tests/test_radio_reception.py -v
+
+# 3. Override rtl_tcp endpoint (e.g. running on a remote host)
+RTL_TCP_HOST=192.168.1.50 RTL_TCP_PORT=1234 pytest tests/test_radio_reception.py -v
+
+# 4. Increase sample window (default is 15 s per station, minimum recommended)
+FM_SAMPLE_DURATION=30 pytest tests/test_radio_reception.py -v
+
+# 5. Run only the per-station audio tests (skip RDS and HLS pipeline)
+pytest tests/test_radio_reception.py -v -k "station"
+
+# 6. Run only the RDS decoding test
+pytest tests/test_radio_reception.py -v -k "rds"
+
+# 7. Run only the HLS pipeline test
+pytest tests/test_radio_reception.py -v -k "hls"
+```
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `RTL_TCP_HOST` | `localhost` | Host running `rtl_tcp` |
+| `RTL_TCP_PORT` | `1234` | Port of `rtl_tcp` |
+| `FM_SAMPLE_DURATION` | `15` | Seconds to sample per station |
+| `HLS_OUTPUT_DIR` | `/tmp/hls_test` | Directory for HLS segment output |
+
+### What each test checks
+
+| Test | What it verifies |
+|---|---|
+| `test_station_produces_audio[Radio Gdańsk]` | `rtl_fm` receives ≥ 8 KiB of PCM from 103.7 MHz |
+| `test_station_produces_audio[RMF FM]` | `rtl_fm` receives ≥ 8 KiB of PCM from 98.4 MHz |
+| `test_station_produces_audio[Radio ZET]` | `rtl_fm` receives ≥ 8 KiB of PCM from 105.0 MHz |
+| `test_station_produces_audio[Radio Maryja]` | `rtl_fm` receives ≥ 8 KiB of PCM from 88.9 MHz |
+| `test_rds_decoding_rmf_fm` | `multimon-ng` decodes at least one RDS frame from RMF FM |
+| `test_hls_pipeline_creates_playlist` | `rtl_fm → sox → ffmpeg` pipeline writes `radio.m3u8` within 20 s |
+
+### Interpreting failures
+
+| Symptom | Likely cause |
+|---|---|
+| All station tests fail with 0 bytes received | `rtl_tcp` is not running or the dongle is not plugged in |
+| Tests are skipped | `rtl_fm` (or `multimon-ng` / `sox` / `ffmpeg`) not installed |
+| Audio tests pass but RDS test fails | Signal strong enough for audio but too weak for RDS sync |
+| HLS test fails but audio tests pass | `sox` or `ffmpeg` not installed, or disk permission issue on HLS dir |
+
 ## License
 
 MIT
