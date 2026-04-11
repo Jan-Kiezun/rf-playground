@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - hls_data:/tmp/hls:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - VITE_API_URL=http://localhost/api
+      - VITE_WS_URL=ws://localhost/ws
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+    volumes:
+      - hls_data:/tmp/hls
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: celery -A app.workers.celery_app worker --loglevel=info -B
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      - postgres
+      - redis
+      - sdr-tools
+    restart: unless-stopped
+    volumes:
+      - hls_data:/tmp/hls
+
+  sdr-tools:
+    build:
+      context: ./sdr-tools
+      dockerfile: Dockerfile
+    privileged: true
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    volumes:
+      - /var/run/sdr:/var/run/sdr
+      - hls_data:/tmp/hls
+    environment:
+      - RTL_TCP_PORT=1234
+    restart: unless-stopped
+    ports:
+      - "1234:1234"
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - ./redis/redis.conf:/etc/redis/redis.conf:ro
+      - redis_data:/data
+    command: redis-server /etc/redis/redis.conf
+    restart: unless-stopped
+
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-sdr}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-changeme}
+      - POSTGRES_DB=${POSTGRES_DB:-sdrdb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  hls_data:
