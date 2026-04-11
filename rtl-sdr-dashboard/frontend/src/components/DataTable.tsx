@@ -4,13 +4,13 @@ interface Column<T> {
   render?: (val: T[keyof T], row: T) => React.ReactNode
 }
 
-interface Props<T extends Record<string, unknown>> {
+interface Props<T extends object> {
   columns: Column<T>[]
   data: T[]
   emptyMessage?: string
 }
 
-export default function DataTable<T extends Record<string, unknown>>({ columns, data, emptyMessage = 'No data' }: Props<T>) {
+export default function DataTable<T extends object>({ columns, data, emptyMessage = 'No data' }: Props<T>) {
   if (data.length === 0) {
     return (
       <div className="flex items-center justify-center h-24 text-gray-500 text-sm">{emptyMessage}</div>

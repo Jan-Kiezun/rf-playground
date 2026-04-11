@@ -58,7 +58,7 @@ export default function Dashboard() {
     .filter((e) => e.type === 'weather' && (e.payload as Record<string, unknown>).temperature_C)
     .slice(0, 20)
     .reverse()
-    .map((e, i) => ({
+    .map((e) => ({
       time: new Date(e.timestamp).toLocaleTimeString(),
       value: Number((e.payload as Record<string, unknown>).temperature_C ?? 0),
     }))

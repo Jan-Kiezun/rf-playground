@@ -148,7 +148,7 @@ export default function Scheduler() {
         {isLoading ? (
           <div className="flex justify-center py-8"><Loader2 className="animate-spin text-sky-400" size={24} /></div>
         ) : (
-          <DataTable columns={columns} data={(jobs ?? []) as unknown as Record<string, unknown>[]} emptyMessage="No scheduled jobs. Add one above." />
+          <DataTable columns={columns} data={jobs ?? []} emptyMessage="No scheduled jobs. Add one above." />
         )}
       </div>
     </div>
