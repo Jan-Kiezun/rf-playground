@@ -179,7 +179,7 @@ def test_device_can_sample():
     # rtl_test talks to the USB dongle directly and does not support the
     # rtl_tcp:: device format, so we always pass the numeric device index here.
     result = subprocess.run(
-        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-s", "2048000", "-p", "2"],
+        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-s", "2048000", "-p2"],
         capture_output=True,
         text=True,
         timeout=15,
