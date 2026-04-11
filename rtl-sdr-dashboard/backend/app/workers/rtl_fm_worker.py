@@ -15,9 +15,10 @@ def run_rtl_fm_rds(connector_id: str, frequency_hz: int = 98_100_000, duration_s
     import redis
 
     r = redis.from_url(settings.REDIS_URL)
+    tcp_device = f"rtl_tcp::{settings.RTL_TCP_HOST}:{settings.RTL_TCP_PORT}"
 
     rtl_cmd = [
-        "rtl_fm", "-f", str(frequency_hz), "-M", "fm",
+        "rtl_fm", "-d", tcp_device, "-f", str(frequency_hz), "-M", "fm",
         "-s", "171000", "-A", "fast", "-l", "0", "-E", "deemp", "-",
     ]
     multimon_cmd = ["multimon-ng", "-t", "raw", "-a", "RDS", "-"]
@@ -55,9 +56,10 @@ async def start_hls_stream(frequency_hz: int = 98_100_000):
 
     os.makedirs(settings.HLS_OUTPUT_DIR, exist_ok=True)
     playlist = os.path.join(settings.HLS_OUTPUT_DIR, "radio.m3u8")
+    tcp_device = f"rtl_tcp::{settings.RTL_TCP_HOST}:{settings.RTL_TCP_PORT}"
 
     rtl_cmd = [
-        "rtl_fm", "-f", str(frequency_hz), "-M", "fm",
+        "rtl_fm", "-d", tcp_device, "-f", str(frequency_hz), "-M", "fm",
         "-s", "200000", "-r", "44100", "-A", "fast", "-",
     ]
     sox_cmd = ["sox", "-t", "raw", "-r", "44100", "-e", "signed-integer", "-b", "16", "-c", "1", "-", "-t", "wav", "-"]

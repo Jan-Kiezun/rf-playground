@@ -25,7 +25,8 @@ def run_noaa_apt(connector_id: str, frequency_hz: int = 137_620_000, duration_s:
 
     try:
         rtl_proc = subprocess.Popen(
-            ["rtl_fm", "-f", str(frequency_hz), "-s", "60000", "-g", "50", "-"],
+            ["rtl_fm", "-d", f"rtl_tcp::{settings.RTL_TCP_HOST}:{settings.RTL_TCP_PORT}",
+             "-f", str(frequency_hz), "-s", "60000", "-g", "50", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
         sox_proc = subprocess.Popen(

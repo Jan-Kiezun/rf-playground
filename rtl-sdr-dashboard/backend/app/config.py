@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
     RTL_SDR_DEVICE_INDEX: int = 0
     RTL_SDR_GAIN: str = "auto"
+    RTL_TCP_HOST: str = "sdr-tools"
+    RTL_TCP_PORT: int = 1234
     HLS_OUTPUT_DIR: str = "/tmp/hls"
     LASTFM_API_KEY: str = ""
     MUSICBRAINZ_USER_AGENT: str = "rtl-sdr-dashboard/1.0"

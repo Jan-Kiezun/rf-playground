@@ -1,29 +1,32 @@
 import asyncio
+import socket
 
 from fastapi import APIRouter
+
+from app.config import settings
 
 router = APIRouter(tags=["device"])
 
 
 @router.get("/device/status")
 async def device_status():
+    """Check device availability by probing the rtl_tcp socket on the sdr-tools container."""
+    host = settings.RTL_TCP_HOST
+    port = settings.RTL_TCP_PORT
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "rtl_test", "-t",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        loop = asyncio.get_running_loop()
+        conn = await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: _tcp_probe(host, port)),
+            timeout=3.0,
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-        except asyncio.TimeoutError:
-            proc.kill()
-            return {"connected": False, "error": "rtl_test timed out"}
+        return {"connected": conn, "host": host, "port": port}
+    except asyncio.TimeoutError:
+        return {"connected": False, "error": "TCP probe timed out"}
 
-        output = (stdout + stderr).decode(errors="replace")
-        connected = "Found" in output or "Tuner type" in output
-        return {
-            "connected": connected,
-            "output": output[:500],
-        }
-    except FileNotFoundError:
-        return {"connected": False, "error": "rtl_test not found"}
+
+def _tcp_probe(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=2.0):
+            return True
+    except OSError:
+        return False
