@@ -163,21 +163,16 @@ def test_device_can_sample():
     """
     Verify that the RTL-SDR dongle can produce raw IQ samples.
 
-    Starts ``rtl_test -s 2048000`` and reads its output until the line
-    "Sampling at" appears, then terminates the process.  ``rtl_test`` runs
-    indefinitely by design, so ``subprocess.run`` with a timeout cannot be
-    used — the process must be explicitly killed after the expected output
-    is observed.
-
-    The test passes when "Sampling at" is seen within 10 seconds, confirming
-    that the USB transfer pipeline is working and the device has been opened
-    successfully.
+    ``rtl_test`` runs indefinitely by design, so the test uses the
+    Python-recommended pattern: ``communicate(timeout=10)`` always raises
+    ``TimeoutExpired``; the process is then killed and the pipe drained via a
+    second ``communicate()`` call.  The test passes when the captured output
+    contains "Sampling at", confirming that the USB transfer pipeline is
+    working and the device has been opened successfully.
 
     This is the lowest-level sanity check — if this fails, all RF tests will
     also fail regardless of signal strength.
     """
-    import threading
-
     _require_binary("rtl_test")
 
     # rtl_test talks to the USB dongle directly and does not support the
@@ -189,27 +184,15 @@ def test_device_can_sample():
         text=True,
     )
 
-    collected: list[str] = []
-    found = threading.Event()
+    try:
+        combined, _ = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        combined, _ = proc.communicate()
 
-    def _reader() -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            collected.append(line)
-            if "Sampling at" in line:
-                found.set()
-                break
-
-    reader = threading.Thread(target=_reader, daemon=True)
-    reader.start()
-    reader.join(timeout=10)
-    proc.terminate()
-    proc.wait()
-
-    combined = "".join(collected)
-    assert found.is_set(), (
-        "rtl_test did not start sampling within 10 s — the dongle may be "
-        "malfunctioning or the USB driver is not working correctly.\n"
+    assert "Sampling at" in combined, (
+        "rtl_test did not start sampling — the dongle may be malfunctioning "
+        "or the USB driver is not working correctly.\n"
         f"rtl_test output:\n{combined}"
     )
     assert "No supported devices" not in combined, (
