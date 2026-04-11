@@ -16,16 +16,9 @@ def run_noaa_apt(connector_id: str, frequency_hz: int = 137_620_000, duration_s:
     wav_path = f"/tmp/noaa_{uuid.uuid4().hex}.wav"
     img_path = os.path.join(settings.HLS_OUTPUT_DIR, f"noaa_{uuid.uuid4().hex}.png")
 
-    record_cmd = [
-        "rtl_fm", "-f", str(frequency_hz), "-s", "60000", "-g", "50",
-        "-", "|", "sox", "-t", "raw", "-r", "60000", "-e", "signed-integer",
-        "-b", "16", "-c", "1", "-", "-r", "11025", "-t", "wav", wav_path,
-        "rate", "11025",
-    ]
-
     try:
         rtl_proc = subprocess.Popen(
-            ["rtl_fm", "-d", f"rtl_tcp::{settings.RTL_TCP_HOST}:{settings.RTL_TCP_PORT}",
+            ["rtl_fm", "-d", settings.rtl_tcp_device,
              "-f", str(frequency_hz), "-s", "60000", "-g", "50", "-"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
