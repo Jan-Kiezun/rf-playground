@@ -300,12 +300,16 @@ def test_rds_decoding_rmf_fm():
     mm_cmd = ["multimon-ng", "-t", "raw", "-a", "RDS", "-"]
 
     try:
-        rtl_proc = subprocess.Popen(rtl_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        rtl_proc = subprocess.Popen(
+            rtl_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         mm_proc = subprocess.Popen(
             mm_cmd,
             stdin=rtl_proc.stdout,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
         )
         rtl_proc.stdout.close()
@@ -313,19 +317,25 @@ def test_rds_decoding_rmf_fm():
         pytest.skip(f"Required binary not found: {exc}")
 
     rds_lines: list[str] = []
+    all_mm_lines: list[str] = []
 
     def _reader() -> None:
         for line in mm_proc.stdout:
-            line = line.strip()
-            if line.startswith("RDS:"):
-                rds_lines.append(line)
+            stripped = line.strip()
+            all_mm_lines.append(stripped)
+            if stripped.startswith("RDS:"):
+                rds_lines.append(stripped)
                 break  # one line is enough — stop early
 
     reader = threading.Thread(target=_reader, daemon=True)
+    t_start = time.monotonic()
     reader.start()
     try:
         reader.join(timeout=duration)
     finally:
+        elapsed = time.monotonic() - t_start
+        rtl_rc = rtl_proc.poll()
+        mm_rc = mm_proc.poll()
         rtl_proc.terminate()
         mm_proc.terminate()
         for p in (rtl_proc, mm_proc):
@@ -333,12 +343,25 @@ def test_rds_decoding_rmf_fm():
                 p.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 p.kill()
+        rtl_stderr = rtl_proc.stderr.read().decode(errors="replace").strip()
+        mm_stderr = mm_proc.stderr.read().decode(errors="replace").strip()
 
     assert rds_lines, (
-        f"No RDS frames decoded from RMF FM (98.4 MHz) within {duration} s.\n"
+        f"No RDS frames decoded from RMF FM (98.4 MHz) within {duration} s "
+        f"(reader ran for {elapsed:.1f} s).\n"
         "This can mean the signal is too weak for RDS decoding even though audio "
         "reception is fine, or that multimon-ng is not receiving data from rtl_fm.\n"
-        f"Device used: {_device_string()}"
+        f"Device used: {_device_string()}\n"
+        f"rtl_fm exit code before terminate: {rtl_rc!r} "
+        f"(None = still running at deadline)\n"
+        f"multimon-ng exit code before terminate: {mm_rc!r} "
+        f"(None = still running at deadline)\n"
+        f"rtl_fm stderr (last 20 lines):\n"
+        + "\n".join(rtl_stderr.splitlines()[-20:] or ["(empty)"]) + "\n"
+        f"multimon-ng stderr (last 20 lines):\n"
+        + "\n".join(mm_stderr.splitlines()[-20:] or ["(empty)"]) + "\n"
+        f"multimon-ng stdout lines seen ({len(all_mm_lines)} total, first 30):\n"
+        + "\n".join(all_mm_lines[:30] or ["(none)"])
     )
 
 
