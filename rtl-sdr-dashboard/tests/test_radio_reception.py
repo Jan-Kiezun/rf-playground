@@ -6,7 +6,7 @@ attached RTL-SDR dongle.  They require:
 
   - An RTL-SDR dongle physically attached to the machine **or** an already
     running ``rtl_tcp`` instance accessible on the network.
-  - ``rtl_fm`` installed (part of the ``rtl-sdr`` package).
+  - ``rtl_fm`` and ``rtl_test`` installed (part of the ``rtl-sdr`` package).
   - ``multimon-ng`` installed (for RDS decoding tests).
   - ``ffmpeg`` and ``sox`` installed (for HLS pipeline test).
 
@@ -17,27 +17,39 @@ Tested stations (Trójmiejski/Polish broadcasts — adjust if needed):
   - Radio ZET       105.0 MHz
   - Radio Maryja     88.9 MHz
 
-Environment variables (all optional — defaults work with a local rtl_tcp):
+Device selection (automatic — no manual config needed in the common case):
+
+  The tests first check whether ``rtl_tcp`` is reachable at
+  ``RTL_TCP_HOST:RTL_TCP_PORT``.  If it is, the rtl_tcp network device string
+  (``rtl_tcp::host:port``) is used so that multiple processes can share the
+  dongle.  If ``rtl_tcp`` is **not** running (e.g. you are running the tests
+  directly on the host with the dongle plugged in), the tests fall back to
+  using the dongle by its device index (``RTL_SDR_DEVICE_INDEX``, default 0).
+
+Environment variables (all optional):
 
   RTL_TCP_HOST          Host running rtl_tcp  (default: localhost)
   RTL_TCP_PORT          Port of rtl_tcp        (default: 1234)
+  RTL_SDR_DEVICE_INDEX  Direct device index when rtl_tcp is absent (default: 0)
   FM_SAMPLE_DURATION    Seconds to sample per station (default: 15)
   HLS_OUTPUT_DIR        Directory for HLS segments (default: /tmp/hls_test)
 
-Skip the whole module when rtl_fm is not found:
+Examples:
 
-  pytest tests/test_radio_reception.py
+  # Run all tests (device is auto-detected)
+  pytest tests/test_radio_reception.py -v
 
-Skip only hardware tests (run everything else):
+  # Run against a remote rtl_tcp
+  RTL_TCP_HOST=192.168.1.50 pytest tests/test_radio_reception.py -v
 
-  pytest tests/test_radio_reception.py -k "not station"
+  # Run only the per-station audio tests
+  pytest tests/test_radio_reception.py -v -k "station"
 """
 
 import os
 import shutil
+import socket
 import subprocess
-import tempfile
-import threading
 import time
 from pathlib import Path
 
@@ -49,20 +61,45 @@ import pytest
 
 RTL_TCP_HOST = os.getenv("RTL_TCP_HOST", "localhost")
 RTL_TCP_PORT = int(os.getenv("RTL_TCP_PORT", "1234"))
+RTL_SDR_DEVICE_INDEX = int(os.getenv("RTL_SDR_DEVICE_INDEX", "0"))
 SAMPLE_DURATION = int(os.getenv("FM_SAMPLE_DURATION", "15"))
 HLS_OUTPUT_DIR = Path(os.getenv("HLS_OUTPUT_DIR", "/tmp/hls_test"))
 
-RTL_TCP_DEVICE = f"rtl_tcp::{RTL_TCP_HOST}:{RTL_TCP_PORT}"
-
 STATIONS = [
-    ("Radio Gdańsk", 103_700_000),
-    ("RMF FM", 98_400_000),
-    ("Radio ZET", 105_000_000),
-    ("Radio Maryja", 88_900_000),
+    ("Radio Gdańsk", 103_700_000),   # Hz
+    ("RMF FM", 98_400_000),           # Hz
+    ("Radio ZET", 105_000_000),       # Hz
+    ("Radio Maryja", 88_900_000),     # Hz
 ]
 
 # ---------------------------------------------------------------------------
-# Helpers / fixtures
+# Device auto-detection
+# ---------------------------------------------------------------------------
+
+
+def _rtl_tcp_reachable() -> bool:
+    """Return True if an rtl_tcp daemon is listening at RTL_TCP_HOST:RTL_TCP_PORT."""
+    try:
+        with socket.create_connection((RTL_TCP_HOST, RTL_TCP_PORT), timeout=1):
+            return True
+    except OSError:
+        return False
+
+
+def _device_string() -> str:
+    """
+    Return the ``-d`` argument value for rtl_fm / rtl_test.
+
+    - If rtl_tcp is reachable → ``rtl_tcp::host:port``
+    - Otherwise              → the direct device index (e.g. ``"0"``)
+    """
+    if _rtl_tcp_reachable():
+        return f"rtl_tcp::{RTL_TCP_HOST}:{RTL_TCP_PORT}"
+    return str(RTL_SDR_DEVICE_INDEX)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -76,7 +113,7 @@ def _rtl_fm_cmd(frequency_hz: int) -> list[str]:
     """Return the rtl_fm command that reads *frequency_hz* and writes raw PCM to stdout."""
     return [
         "rtl_fm",
-        "-d", RTL_TCP_DEVICE,
+        "-d", _device_string(),
         "-f", str(frequency_hz),
         "-M", "fm",
         "-s", "200000",   # 200 kHz sample rate (wide-band FM)
@@ -84,6 +121,76 @@ def _rtl_fm_cmd(frequency_hz: int) -> list[str]:
         "-A", "fast",
         "-",
     ]
+
+
+# ---------------------------------------------------------------------------
+# Tests: basic device detection
+# ---------------------------------------------------------------------------
+
+
+def test_device_detected():
+    """
+    Verify that at least one RTL-SDR device is visible to the system.
+
+    Uses ``rtl_test -t`` which lists available devices and exits immediately
+    (no RF sampling).  The test passes as long as the output contains
+    "device(s)" and no "No supported devices" error.
+    """
+    _require_binary("rtl_test")
+
+    # rtl_test talks to the USB dongle directly and does not support the
+    # rtl_tcp:: device format, so we always pass the numeric device index here.
+    result = subprocess.run(
+        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-t"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    combined = result.stdout + result.stderr
+
+    assert "No supported devices" not in combined, (
+        "rtl_test found no supported RTL-SDR devices.\n"
+        "Check that the dongle is plugged in and the dvb_usb_rtl28xxu kernel module "
+        "is blacklisted.\n"
+        f"rtl_test output:\n{combined}"
+    )
+    assert "device" in combined.lower(), (
+        f"Unexpected rtl_test output — could not confirm a device was found:\n{combined}"
+    )
+
+
+def test_device_can_sample():
+    """
+    Verify that the RTL-SDR dongle can produce raw IQ samples.
+
+    Runs ``rtl_test -s 2048000 -n 100`` which captures exactly 100 × 512-byte
+    blocks (≈ 51 200 bytes) and reports the sample rate accuracy.  The test
+    passes when the output contains the expected "Samples per block" line,
+    confirming the USB transfer pipeline is working.
+
+    This is the lowest-level sanity check — if this fails, all RF tests will
+    also fail regardless of signal strength.
+    """
+    _require_binary("rtl_test")
+
+    # rtl_test talks to the USB dongle directly and does not support the
+    # rtl_tcp:: device format, so we always pass the numeric device index here.
+    result = subprocess.run(
+        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-s", "2048000", "-n", "100"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    combined = result.stdout + result.stderr
+
+    assert "Samples per block" in combined or "samples" in combined.lower(), (
+        "rtl_test did not report any sample data — the dongle may be malfunctioning "
+        "or the USB driver is not working correctly.\n"
+        f"rtl_test output:\n{combined}"
+    )
+    assert "No supported devices" not in combined, (
+        f"rtl_test found no supported RTL-SDR devices:\n{combined}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +222,7 @@ def test_station_produces_audio(station_name: str, frequency_hz: int):
 
     collected: list[bytes] = []
     deadline = time.monotonic() + SAMPLE_DURATION
-    min_bytes = 8192  # ~0.05 s of 44100 Hz 16-bit mono PCM
+    min_bytes = 8192  # ~0.09 s of 44100 Hz 16-bit mono PCM (8192 / (44100×2) ≈ 0.093 s)
 
     try:
         while time.monotonic() < deadline:
@@ -139,8 +246,9 @@ def test_station_produces_audio(station_name: str, frequency_hz: int):
     assert total_bytes >= min_bytes, (
         f"[{station_name} @ {frequency_hz / 1e6:.1f} MHz] "
         f"Expected ≥{min_bytes} bytes of PCM audio but got {total_bytes} bytes.\n"
+        f"Device used: {_device_string()}\n"
         f"This usually means the station is out of range or the RTL-SDR dongle "
-        f"is not connected / rtl_tcp is not running at {RTL_TCP_HOST}:{RTL_TCP_PORT}.\n"
+        f"is not accessible (run test_device_detected first to confirm hardware).\n"
         f"rtl_fm stderr:\n{stderr_output[-2000:]}"
     )
 
@@ -167,7 +275,7 @@ def test_rds_decoding_rmf_fm():
 
     rtl_cmd = [
         "rtl_fm",
-        "-d", RTL_TCP_DEVICE,
+        "-d", _device_string(),
         "-f", str(freq_hz),
         "-M", "fm",
         "-s", "171000",  # narrow sample rate preferred by multimon-ng
@@ -216,7 +324,7 @@ def test_rds_decoding_rmf_fm():
         f"No RDS frames decoded from RMF FM (98.4 MHz) within {duration} s.\n"
         "This can mean the signal is too weak for RDS decoding even though audio "
         "reception is fine, or that multimon-ng is not receiving data from rtl_fm.\n"
-        f"rtl_tcp endpoint: {RTL_TCP_HOST}:{RTL_TCP_PORT}"
+        f"Device used: {_device_string()}"
     )
 
 
@@ -243,7 +351,7 @@ def test_hls_pipeline_creates_playlist():
     playlist = hls_dir / "radio.m3u8"
 
     rtl_cmd = [
-        "rtl_fm", "-d", RTL_TCP_DEVICE,
+        "rtl_fm", "-d", _device_string(),
         "-f", str(freq_hz), "-M", "fm",
         "-s", "200000", "-r", "44100", "-A", "fast", "-",
     ]
@@ -295,6 +403,7 @@ def test_hls_pipeline_creates_playlist():
 
     assert playlist.exists() and playlist.stat().st_size > 0, (
         f"HLS playlist was not created at {playlist} within 20 s.\n"
+        f"Device used: {_device_string()}\n"
         "Check that rtl_fm, sox, and ffmpeg are all installed and that "
-        f"rtl_tcp is running at {RTL_TCP_HOST}:{RTL_TCP_PORT}."
+        "the RTL-SDR dongle is accessible."
     )

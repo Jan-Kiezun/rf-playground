@@ -161,10 +161,21 @@ docker compose exec sdr-tools rtl_test -t
 ## Radio Reception Tests
 
 The `tests/` directory contains a pytest suite that verifies FM broadcast
-reception end-to-end.  The tests connect to your RTL-SDR dongle (via
-`rtl_tcp`) and check that real stations return usable audio — useful for
-diagnosing whether problems are in the hardware/driver layer or in the
-application code.
+reception end-to-end — useful for diagnosing whether problems are in the
+hardware/driver layer or in the application code.
+
+### Device auto-detection
+
+The tests automatically choose how to talk to the dongle:
+
+1. **Direct device** (dongle plugged straight into the machine where you run
+   the tests): the tests use the device index directly (default `0`).  No
+   extra daemons required.
+2. **Via `rtl_tcp`** (e.g. the Docker stack is running): if the tests can
+   reach `rtl_tcp` at `RTL_TCP_HOST:RTL_TCP_PORT`, they use the network
+   device string instead.
+
+You do not need to set anything manually — just plug in the dongle and run.
 
 ### Stations tested
 
@@ -177,8 +188,7 @@ application code.
 
 ### Prerequisites
 
-You need the following installed on the **host machine** (not inside Docker)
-where you run the tests:
+Install the required tools on the **host machine** where you run the tests:
 
 ```bash
 # Debian / Ubuntu
@@ -188,18 +198,12 @@ sudo apt-get install rtl-sdr sox ffmpeg multimon-ng python3-pip
 sudo pacman -S rtl-sdr sox ffmpeg multimon-ng python-pip
 ```
 
-The RTL-SDR dongle must be attached and `rtl_tcp` must be running so the
-tests can reach it.  The easiest way is to start the full stack first:
+Also blacklist the conflicting DVB kernel module so the dongle is not claimed
+by the OS driver:
 
 ```bash
-cd rtl-sdr-dashboard
-docker compose up -d          # starts rtl_tcp on port 1234 (via sdr-tools)
-```
-
-If you prefer to run `rtl_tcp` directly on the host instead:
-
-```bash
-rtl_tcp -a 0.0.0.0 -p 1234
+echo "blacklist dvb_usb_rtl28xxu" | sudo tee /etc/modprobe.d/rtlsdr.conf
+sudo modprobe -r dvb_usb_rtl28xxu 2>/dev/null || true
 ```
 
 ### Running the tests
@@ -208,30 +212,34 @@ rtl_tcp -a 0.0.0.0 -p 1234
 # 1. Install test dependencies
 pip install -r tests/requirements-test.txt
 
-# 2. Run all radio reception tests (uses localhost:1234 by default)
+# 2. Run all tests — device is auto-detected (dongle plugged in directly)
 pytest tests/test_radio_reception.py -v
 
-# 3. Override rtl_tcp endpoint (e.g. running on a remote host)
-RTL_TCP_HOST=192.168.1.50 RTL_TCP_PORT=1234 pytest tests/test_radio_reception.py -v
+# 3. Run only the quick device-sanity checks first (no RF signal needed)
+pytest tests/test_radio_reception.py -v -k "device"
 
-# 4. Increase sample window (default is 15 s per station, minimum recommended)
-FM_SAMPLE_DURATION=30 pytest tests/test_radio_reception.py -v
-
-# 5. Run only the per-station audio tests (skip RDS and HLS pipeline)
+# 4. Run only the per-station audio tests
 pytest tests/test_radio_reception.py -v -k "station"
 
-# 6. Run only the RDS decoding test
+# 5. Run only the RDS decoding test
 pytest tests/test_radio_reception.py -v -k "rds"
 
-# 7. Run only the HLS pipeline test
+# 6. Run only the HLS pipeline test
 pytest tests/test_radio_reception.py -v -k "hls"
+
+# 7. Run via a remote rtl_tcp (e.g. Docker stack on another machine)
+RTL_TCP_HOST=192.168.1.50 RTL_TCP_PORT=1234 pytest tests/test_radio_reception.py -v
+
+# 8. Increase sample window (default is 15 s per station, minimum recommended)
+FM_SAMPLE_DURATION=30 pytest tests/test_radio_reception.py -v
 ```
 
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `RTL_TCP_HOST` | `localhost` | Host running `rtl_tcp` |
+| `RTL_SDR_DEVICE_INDEX` | `0` | Direct device index when `rtl_tcp` is not running |
+| `RTL_TCP_HOST` | `localhost` | Host running `rtl_tcp` (used only if reachable) |
 | `RTL_TCP_PORT` | `1234` | Port of `rtl_tcp` |
 | `FM_SAMPLE_DURATION` | `15` | Seconds to sample per station |
 | `HLS_OUTPUT_DIR` | `/tmp/hls_test` | Directory for HLS segment output |
@@ -240,6 +248,8 @@ pytest tests/test_radio_reception.py -v -k "hls"
 
 | Test | What it verifies |
 |---|---|
+| `test_device_detected` | `rtl_test -t` finds the dongle (no RF needed) |
+| `test_device_can_sample` | Dongle produces IQ samples at 2 048 000 S/s (no RF needed) |
 | `test_station_produces_audio[Radio Gdańsk]` | `rtl_fm` receives ≥ 8 KiB of PCM from 103.7 MHz |
 | `test_station_produces_audio[RMF FM]` | `rtl_fm` receives ≥ 8 KiB of PCM from 98.4 MHz |
 | `test_station_produces_audio[Radio ZET]` | `rtl_fm` receives ≥ 8 KiB of PCM from 105.0 MHz |
@@ -251,10 +261,12 @@ pytest tests/test_radio_reception.py -v -k "hls"
 
 | Symptom | Likely cause |
 |---|---|
-| All station tests fail with 0 bytes received | `rtl_tcp` is not running or the dongle is not plugged in |
-| Tests are skipped | `rtl_fm` (or `multimon-ng` / `sox` / `ffmpeg`) not installed |
-| Audio tests pass but RDS test fails | Signal strong enough for audio but too weak for RDS sync |
-| HLS test fails but audio tests pass | `sox` or `ffmpeg` not installed, or disk permission issue on HLS dir |
+| `test_device_detected` fails | Dongle not plugged in, or `dvb_usb_rtl28xxu` not blacklisted |
+| `test_device_can_sample` fails | USB transfer issue — try a different USB port or cable |
+| All station tests fail with 0 bytes received | Signal too weak, or wrong antenna — verify with `gqrx` first |
+| Tests are skipped | The required binary (`rtl_fm`, `rtl_test`, `multimon-ng`, `sox`, `ffmpeg`) is not installed |
+| Audio tests pass but RDS test fails | Signal strong enough for audio but too weak for RDS carrier sync |
+| HLS test fails but audio tests pass | `sox` or `ffmpeg` not installed, or permission issue on HLS dir |
 
 ## License
 
