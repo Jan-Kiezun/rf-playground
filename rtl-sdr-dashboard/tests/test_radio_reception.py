@@ -163,32 +163,53 @@ def test_device_can_sample():
     """
     Verify that the RTL-SDR dongle can produce raw IQ samples.
 
-    Runs ``rtl_test -s 2048000 -p 2`` which starts a 2-second PPM error
-    measurement at 2 048 000 S/s.  The test passes when the output contains
-    "Sampling at", confirming that the USB transfer pipeline is working and
-    the device has been opened successfully.
+    Starts ``rtl_test -s 2048000`` and reads its output until the line
+    "Sampling at" appears, then terminates the process.  ``rtl_test`` runs
+    indefinitely by design, so ``subprocess.run`` with a timeout cannot be
+    used — the process must be explicitly killed after the expected output
+    is observed.
+
+    The test passes when "Sampling at" is seen within 10 seconds, confirming
+    that the USB transfer pipeline is working and the device has been opened
+    successfully.
 
     This is the lowest-level sanity check — if this fails, all RF tests will
     also fail regardless of signal strength.
-
-    Note: the ``-n`` (block-count) option is not available in all rtl-sdr
-    builds (it was removed in newer versions), so ``-p`` is used instead.
     """
+    import threading
+
     _require_binary("rtl_test")
 
     # rtl_test talks to the USB dongle directly and does not support the
     # rtl_tcp:: device format, so we always pass the numeric device index here.
-    result = subprocess.run(
-        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-s", "2048000", "-p2"],
-        capture_output=True,
+    proc = subprocess.Popen(
+        ["rtl_test", "-d", str(RTL_SDR_DEVICE_INDEX), "-s", "2048000"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
-        timeout=15,
     )
-    combined = result.stdout + result.stderr
 
-    assert "Sampling at" in combined, (
-        "rtl_test did not start sampling — the dongle may be malfunctioning "
-        "or the USB driver is not working correctly.\n"
+    collected: list[str] = []
+    found = threading.Event()
+
+    def _reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            collected.append(line)
+            if "Sampling at" in line:
+                found.set()
+                break
+
+    reader = threading.Thread(target=_reader, daemon=True)
+    reader.start()
+    reader.join(timeout=10)
+    proc.terminate()
+    proc.wait()
+
+    combined = "".join(collected)
+    assert found.is_set(), (
+        "rtl_test did not start sampling within 10 s — the dongle may be "
+        "malfunctioning or the USB driver is not working correctly.\n"
         f"rtl_test output:\n{combined}"
     )
     assert "No supported devices" not in combined, (
