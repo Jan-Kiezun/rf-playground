@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     cmake \
     git \
     build-essential \
+    pkg-config \
     wget \
     python3 \
     python3-pip \
