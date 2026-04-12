@@ -143,6 +143,26 @@ def _pipeline_start(freq_hz: int):
     _hls_procs = [rtl_proc, sox_proc, ffmpeg_proc]
     log.info("HLS pipeline started (pids: %s)", [p.pid for p in _hls_procs])
 
+    # Watchdog: log clearly if any process exits unexpectedly so that the
+    # "PLL not locked / no audio" symptom is immediately visible in the logs.
+    for proc, label in zip(_hls_procs, ("rtl_fm", "sox", "ffmpeg")):
+        threading.Thread(
+            target=_watchdog, args=(proc, label), daemon=True
+        ).start()
+
+
+def _watchdog(proc, label):
+    """Log a clear message when a pipeline process exits unexpectedly."""
+    proc.wait()
+    rc = proc.returncode
+    if rc is not None and rc != 0:
+        log.warning(
+            "[%s] exited with code %d — pipeline stopped. "
+            "If you see 'PLL not locked' above, run  sdr-tools/setup-host.sh  "
+            "on the HOST to blacklist the kernel DVB-T module.",
+            label, rc,
+        )
+
 
 # ── HTTP handler ─────────────────────────────────────────────────────────────
 

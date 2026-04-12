@@ -40,8 +40,10 @@ RUN wget -q https://github.com/martinber/noaa-apt/releases/download/v1.4.1/noaa-
 # Create socket directory
 RUN mkdir -p /var/run/sdr /tmp/hls
 
-# Blacklist conflicting kernel modules (document only - actual blacklisting must be done on host)
-# echo "blacklist dvb_usb_rtl28xxu" >> /etc/modprobe.d/rtlsdr.conf
+# Blacklist conflicting kernel modules on the HOST before starting the stack:
+#   sudo ./setup-host.sh
+# Without this the kernel dvb_usb_rtl28xxu driver grabs the USB dongle first
+# and rtl_fm cannot initialise the tuner — you will hear only static.
 
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
