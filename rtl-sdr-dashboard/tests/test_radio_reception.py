@@ -109,6 +109,36 @@ def _require_binary(name: str) -> None:
         pytest.skip(f"'{name}' not found on PATH — install rtl-sdr tools first")
 
 
+def _require_multimon_demodulator(mode: str) -> None:
+    """Skip the test if multimon-ng does not support *mode* as a demodulator.
+
+    Older builds (e.g. 1.1.9) omit RDS entirely.  Running multimon-ng with no
+    arguments causes it to print its help including the "Available demodulators:"
+    line, then exit with a non-zero code — that is expected and safe to ignore.
+    """
+    try:
+        result = subprocess.run(
+            ["multimon-ng"],
+            capture_output=True,
+            text=True,
+        )
+        output = result.stdout + result.stderr
+    except FileNotFoundError:
+        pytest.skip("'multimon-ng' not found on PATH")
+
+    for line in output.splitlines():
+        if "Available demodulators:" in line:
+            available = line.split("Available demodulators:", 1)[1].split()
+            if mode not in available:
+                pytest.skip(
+                    f"multimon-ng does not support '{mode}' demodulator "
+                    f"(available: {', '.join(available)})"
+                )
+            return
+
+    # If we couldn't parse the list, assume it is available and let the test run.
+
+
 def _rtl_fm_cmd(frequency_hz: int) -> list[str]:
     """Return the rtl_fm command that reads *frequency_hz* and writes raw PCM to stdout."""
     return [
@@ -282,6 +312,7 @@ def test_rds_decoding_rmf_fm():
 
     _require_binary("rtl_fm")
     _require_binary("multimon-ng")
+    _require_multimon_demodulator("RDS")
 
     freq_hz = 98_400_000
     duration = SAMPLE_DURATION * 2
@@ -297,7 +328,7 @@ def test_rds_decoding_rmf_fm():
         "-E", "deemp",
         "-",
     ]
-    mm_cmd = ["multimon-ng", "-t", "raw", "-a", "RDS", "-f", "/dev/stdin"]
+    mm_cmd = ["multimon-ng", "-t", "raw", "-a", "RDS", "-"]
 
     try:
         rtl_proc = subprocess.Popen(
