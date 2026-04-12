@@ -1,2 +1,4 @@
 opencode-workspace
 tmp
+.env
+__pycache__

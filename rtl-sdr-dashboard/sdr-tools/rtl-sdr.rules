@@ -1,0 +1,15 @@
+# udev rules for RTL-SDR (RTL2832U-based) USB dongles
+# Source: https://www.rtl-sdr.com/rtl-sdr-quick-start-guide/
+#
+# Install on the HOST (not inside Docker):
+#   sudo cp rtl-sdr.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# This grants all members of the "plugdev" group non-root access to the dongle.
+
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", GROUP="plugdev", MODE="0664", SYMLINK+="rtl_sdr"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", GROUP="plugdev", MODE="0664", SYMLINK+="rtl_sdr"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2840", GROUP="plugdev", MODE="0664", SYMLINK+="rtl_sdr"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2848", GROUP="plugdev", MODE="0664", SYMLINK+="rtl_sdr"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2850", GROUP="plugdev", MODE="0664", SYMLINK+="rtl_sdr"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", GROUP="plugdev", MODE="0664", SYMLINK+="rtl_sdr"
