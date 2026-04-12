@@ -344,7 +344,7 @@ def test_rds_decoding_rmf_fm():
             except subprocess.TimeoutExpired:
                 p.kill()
         rtl_stderr = rtl_proc.stderr.read().decode(errors="replace").strip()
-        mm_stderr = mm_proc.stderr.read().decode(errors="replace").strip()
+        mm_stderr = mm_proc.stderr.read().strip()
 
     assert rds_lines, (
         f"No RDS frames decoded from RMF FM (98.4 MHz) within {duration} s "
