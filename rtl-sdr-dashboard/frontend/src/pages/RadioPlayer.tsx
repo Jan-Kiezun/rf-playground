@@ -30,6 +30,17 @@ export default function RadioPlayer() {
 
   function startStream() {
     const freqHz = Math.round(parseFloat(frequency) * 1e6)
+
+    // Unlock the audio context NOW, while we still have the user-gesture context.
+    // Browsers (Chrome, Firefox) block audio.play() called from async callbacks;
+    // calling it synchronously here (muted) reserves the playback permission so
+    // the later unmuted play() inside attachHls() is allowed.
+    const audio = audioRef.current
+    if (audio) {
+      audio.muted = true
+      audio.play().then(() => audio.pause()).catch(() => {})
+    }
+
     fetch(`${API}/audio/start?frequency_hz=${freqHz}`, { method: 'POST' })
       .then(() => {
         setStatus('Starting HLS stream…')
@@ -70,7 +81,8 @@ export default function RadioPlayer() {
       hls.loadSource('/stream/radio.m3u8')
       hls.attachMedia(audio)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        audio.play().catch(() => {})
+        audio.muted = false
+        audio.play().catch(() => setStatus('Autoplay blocked — tap Play again'))
         setPlaying(true)
         setStatus('Streaming')
       })
