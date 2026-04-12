@@ -106,7 +106,10 @@ def _pipeline_start(freq_hz: int):
 
     rtl_cmd = [
         "rtl_fm", "-d", "0", "-f", str(freq_hz), "-M", "fm",
-        "-s", "200000", "-r", "44100", "-A", "fast", "-",
+        "-s", "200000", "-r", "44100", "-A", "fast",
+        "-l", "0",       # disable squelch — always pass audio through
+        "-E", "deemp",   # apply FM broadcast deemphasis (50 µs Europe / 75 µs US)
+        "-",
     ]
     sox_cmd = [
         "sox", "-t", "raw", "-r", "44100", "-e", "signed-integer", "-b", "16",
