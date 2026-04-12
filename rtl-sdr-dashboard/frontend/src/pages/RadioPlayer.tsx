@@ -4,9 +4,9 @@ import { Play, Pause, Volume2, Radio } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 
 const PRESETS = [
-  { label: 'Local FM', freq: 98.1 },
-  { label: 'NOAA 1', freq: 162.4 },
-  { label: 'NOAA 2', freq: 162.55 },
+  { label: 'Radio Gdańsk', freq: 103.7 },
+  { label: 'RMF FM', freq: 98.4 },
+  { label: 'Radio ZET', freq: 105.0 },
 ]
 
 const API = import.meta.env.VITE_API_URL ?? '/api'
@@ -60,7 +60,13 @@ export default function RadioPlayer() {
     if (!audio) return
 
     if (Hls.isSupported()) {
-      const hls = new Hls({ lowLatencyMode: true })
+      const hls = new Hls({
+        // lowLatencyMode requires LL-HLS server-side extensions (EXT-X-PART);
+        // our ffmpeg output is standard HLS so we must keep this disabled.
+        lowLatencyMode: false,
+        liveSyncDurationCount: 3,
+        maxBufferLength: 30,
+      })
       hls.loadSource('/stream/radio.m3u8')
       hls.attachMedia(audio)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -69,7 +75,13 @@ export default function RadioPlayer() {
         setStatus('Streaming')
       })
       hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) {
+        if (!data.fatal) return
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          // Transient network hiccup — try to resume loading
+          hls.startLoad()
+        } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+          hls.recoverMediaError()
+        } else {
           setStatus('Stream error')
           setPlaying(false)
         }
