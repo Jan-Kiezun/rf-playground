@@ -112,19 +112,23 @@ def _require_binary(name: str) -> None:
 def _require_multimon_demodulator(mode: str) -> None:
     """Skip the test if multimon-ng does not support *mode* as a demodulator.
 
-    Older builds (e.g. 1.1.9) omit RDS entirely.  Running multimon-ng with no
-    arguments causes it to print its help including the "Available demodulators:"
-    line, then exit with a non-zero code — that is expected and safe to ignore.
+    Older builds (e.g. 1.1.9) omit RDS entirely.  We probe by passing an
+    intentionally invalid mode name: multimon-ng immediately prints
+    "invalid mode" plus the "Available demodulators:" line and exits without
+    touching the sound hardware, so this call never blocks.
     """
     try:
         result = subprocess.run(
-            ["multimon-ng"],
+            ["multimon-ng", "-a", "_PROBE_"],
             capture_output=True,
             text=True,
+            timeout=5,
         )
         output = result.stdout + result.stderr
     except FileNotFoundError:
         pytest.skip("'multimon-ng' not found on PATH")
+    except subprocess.TimeoutExpired:
+        pytest.skip("'multimon-ng' did not respond within 5 s during capability probe")
 
     for line in output.splitlines():
         if "Available demodulators:" in line:
