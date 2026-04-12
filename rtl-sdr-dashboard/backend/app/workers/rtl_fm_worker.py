@@ -1,15 +1,18 @@
-import asyncio
 import logging
-import os
 import subprocess
 import threading
 from functools import lru_cache
+
+import httpx
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_hls_procs: list[subprocess.Popen] = []
+# Base URL of the sdr-tools control server (port 8080).
+_SDR_TOOLS_URL = (
+    f"http://{settings.RTL_TCP_HOST}:{settings.RTL_TCP_HEALTH_PORT}"
+)
 
 
 def _drain_stderr(proc: subprocess.Popen, label: str) -> None:
@@ -29,7 +32,7 @@ def _drain_stderr(proc: subprocess.Popen, label: str) -> None:
 
 
 @lru_cache(maxsize=1)
-def _multimon_supported_modes() -> frozenset[str]:
+def _multimon_supported_modes() -> frozenset:
     """Return the set of demodulator names supported by the installed multimon-ng.
 
     Calls ``multimon-ng -h`` (which exits non-zero but prints the usage block
@@ -112,90 +115,27 @@ def run_rtl_fm_rds(connector_id: str, frequency_hz: int = 98_100_000, duration_s
         logger.error("RDS pipeline tool not found: %s", exc)
 
 
-def _run_hls_pipeline(
-    rtl_cmd: list[str],
-    sox_cmd: list[str],
-    ffmpeg_cmd: list[str],
-) -> None:
-    """Blocking pipeline: rtl_fm → sox → ffmpeg → HLS segments.
+async def start_hls_stream(frequency_hz: int = 98_100_000) -> None:
+    """Start FM → HLS pipeline by delegating to the sdr-tools control server.
 
-    Uses subprocess.Popen (not asyncio subprocesses) so that stdout/stdin can
-    be connected via real OS pipes (asyncio.StreamReader lacks fileno()).
-    Stderr from every stage is captured and forwarded to the Python logger so
-    failures are visible in ``docker compose logs backend``.
+    The HLS pipeline (rtl_fm → sox → ffmpeg) runs inside the sdr-tools
+    container, which has direct USB access to the RTL-SDR dongle.  The backend
+    container only makes an HTTP request to trigger it; the pipeline continues
+    running in sdr-tools until stop_hls_stream() is called.
     """
-    global _hls_procs
-
-    logger.info("HLS pipeline starting")
-    logger.info("  rtl_fm  : %s", " ".join(rtl_cmd))
-    logger.info("  sox     : %s", " ".join(sox_cmd))
-    logger.info("  ffmpeg  : %s", " ".join(ffmpeg_cmd))
-
-    rtl_proc = subprocess.Popen(rtl_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    threading.Thread(target=_drain_stderr, args=(rtl_proc, "rtl_fm"), daemon=True).start()
-
-    sox_proc = subprocess.Popen(
-        sox_cmd, stdin=rtl_proc.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    threading.Thread(target=_drain_stderr, args=(sox_proc, "sox"), daemon=True).start()
-    rtl_proc.stdout.close()  # allow rtl_proc to receive SIGPIPE if sox exits
-
-    ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdin=sox_proc.stdout, stderr=subprocess.PIPE)
-    threading.Thread(target=_drain_stderr, args=(ffmpeg_proc, "ffmpeg"), daemon=True).start()
-    sox_proc.stdout.close()
-
-    _hls_procs = [rtl_proc, sox_proc, ffmpeg_proc]
-    rc = ffmpeg_proc.wait()
-    logger.info("HLS pipeline ended (ffmpeg exit code=%d)", rc)
-
-    rtl_rc = rtl_proc.poll()
-    sox_rc = sox_proc.poll()
-    if rtl_rc is not None:
-        logger.info("rtl_fm exit code=%d", rtl_rc)
-    if sox_rc is not None:
-        logger.info("sox exit code=%d", sox_rc)
+    url = f"{_SDR_TOOLS_URL}/audio/start"
+    logger.info("start_hls_stream: freq=%d Hz → %s", frequency_hz, url)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(url, params={"frequency_hz": frequency_hz})
+        resp.raise_for_status()
+    logger.info("HLS stream started on sdr-tools")
 
 
-async def start_hls_stream(frequency_hz: int = 98_100_000):
-    """Start FM → HLS pipeline (non-blocking via executor)."""
-    os.makedirs(settings.HLS_OUTPUT_DIR, exist_ok=True)
-    playlist = os.path.join(settings.HLS_OUTPUT_DIR, "radio.m3u8")
-
-    logger.info(
-        "start_hls_stream: freq=%d Hz, playlist=%s, device=%s",
-        frequency_hz, playlist, settings.rtl_tcp_device,
-    )
-
-    rtl_cmd = [
-        "rtl_fm", "-d", settings.rtl_tcp_device, "-f", str(frequency_hz), "-M", "fm",
-        "-s", "200000", "-r", "44100", "-A", "fast", "-",
-    ]
-    sox_cmd = [
-        "sox", "-t", "raw", "-r", "44100", "-e", "signed-integer", "-b", "16",
-        "-c", "1", "-", "-t", "wav", "-",
-    ]
-    ffmpeg_cmd = [
-        "ffmpeg", "-y",          # overwrite existing playlist/segments without prompting
-        "-i", "pipe:0",
-        "-c:a", "aac", "-b:a", "128k",
-        "-f", "hls",
-        "-hls_time", "4",
-        "-hls_list_size", "5",
-        "-hls_flags", "delete_segments",
-        "-loglevel", "warning",  # suppress per-frame noise, keep warnings/errors
-        playlist,
-    ]
-
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _run_hls_pipeline, rtl_cmd, sox_cmd, ffmpeg_cmd)
-
-
-async def stop_hls_stream():
-    global _hls_procs
-    logger.info("stop_hls_stream: terminating %d process(es)", len(_hls_procs))
-    for proc in reversed(_hls_procs):
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-    _hls_procs = []
+async def stop_hls_stream() -> None:
+    """Stop the FM → HLS pipeline on the sdr-tools control server."""
+    url = f"{_SDR_TOOLS_URL}/audio/stop"
+    logger.info("stop_hls_stream → %s", url)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(url)
+        resp.raise_for_status()
+    logger.info("HLS stream stopped on sdr-tools")

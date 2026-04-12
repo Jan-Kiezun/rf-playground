@@ -1,7 +1,6 @@
-import asyncio
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from app.config import settings
 from app.workers.rtl_fm_worker import start_hls_stream, stop_hls_stream
@@ -24,18 +23,19 @@ async def audio_status():
 
 @router.post("/audio/start")
 async def start_audio_stream(frequency_hz: int = 98_100_000):
-    """Start FM radio HLS stream at given frequency."""
-    task = asyncio.create_task(start_hls_stream(frequency_hz))
-
-    def _on_done(t: asyncio.Task) -> None:
-        if not t.cancelled() and t.exception() is not None:
-            logger.error("HLS stream task failed: %s", t.exception())
-
-    task.add_done_callback(_on_done)
+    """Start FM radio HLS stream at the given frequency."""
+    try:
+        await start_hls_stream(frequency_hz)
+    except Exception as exc:
+        logger.error("Failed to start HLS stream: %s", exc)
+        raise HTTPException(status_code=502, detail=f"sdr-tools unreachable: {exc}") from exc
     return {"status": "starting", "frequency_hz": frequency_hz}
 
 
 @router.post("/audio/stop")
 async def stop_audio_stream():
-    await stop_hls_stream()
+    try:
+        await stop_hls_stream()
+    except Exception as exc:
+        logger.warning("Failed to stop HLS stream: %s", exc)
     return {"status": "stopped"}
