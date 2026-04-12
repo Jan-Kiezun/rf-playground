@@ -1,8 +1,6 @@
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
-    rtl-sdr \
-    librtlsdr-dev \
     sox \
     ffmpeg \
     multimon-ng \
@@ -11,9 +9,23 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
     wget \
+    unzip \
+    libusb-1.0-0-dev \
     python3 \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install RTL-SDR Blog V4 fork of librtlsdr.
+# The standard Debian rtl-sdr package does NOT support the R828D tuner used
+# in the RTL-SDR Blog V4 dongle.  This fork adds V4 support.
+# https://github.com/rtlsdrblog/rtl-sdr-blog
+RUN git clone https://github.com/rtlsdrblog/rtl-sdr-blog.git /tmp/rtl-sdr-blog \
+    && cd /tmp/rtl-sdr-blog \
+    && mkdir build && cd build \
+    && cmake .. -DDETACH_KERNEL_DRIVER=ON -DINSTALL_UDEV_RULES=ON \
+    && make -j$(nproc) && make install \
+    && ldconfig \
+    && rm -rf /tmp/rtl-sdr-blog
 
 # Install rtl_433
 RUN git clone https://github.com/merbanan/rtl_433.git /tmp/rtl_433 \
@@ -40,10 +52,9 @@ RUN wget -q https://github.com/martinber/noaa-apt/releases/download/v1.4.1/noaa-
 # Create socket directory
 RUN mkdir -p /var/run/sdr /tmp/hls
 
-# Blacklist conflicting kernel modules on the HOST before starting the stack:
-#   sudo ./setup-host.sh
-# Without this the kernel dvb_usb_rtl28xxu driver grabs the USB dongle first
-# and rtl_fm cannot initialise the tuner — you will hear only static.
+# NOTE: if the host kernel grabs the dongle before librtlsdr can, run:
+#   sudo ./sdr-tools/setup-host.sh
+# on the HOST to blacklist the dvb_usb_rtl28xxu module.
 
 COPY start.sh /start.sh
 RUN chmod +x /start.sh
