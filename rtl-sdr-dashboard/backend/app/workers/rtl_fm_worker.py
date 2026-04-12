@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import threading
+from functools import lru_cache
 
 from app.config import settings
 
@@ -27,12 +28,52 @@ def _drain_stderr(proc: subprocess.Popen, label: str) -> None:
         pass
 
 
+@lru_cache(maxsize=1)
+def _multimon_supported_modes() -> frozenset[str]:
+    """Return the set of demodulator names supported by the installed multimon-ng.
+
+    Calls ``multimon-ng -h`` (which exits non-zero but prints the usage block
+    that includes the "Available demodulators:" line) and parses its output.
+    Cached so we only probe once per process.
+    """
+    try:
+        result = subprocess.run(
+            ["multimon-ng", "-h"],
+            capture_output=True, text=True, timeout=5,
+        )
+        output = result.stdout + result.stderr
+        for line in output.splitlines():
+            if "Available demodulators:" in line:
+                modes_part = line.split("Available demodulators:", 1)[1]
+                return frozenset(modes_part.split())
+    except Exception as exc:
+        logger.warning("Could not probe multimon-ng modes: %s", exc)
+    return frozenset()
+
+
 def run_rtl_fm_rds(connector_id: str, frequency_hz: int = 98_100_000, duration_s: int = 30):
-    """Run rtl_fm and pipe to multimon-ng for RDS decoding."""
+    """Run rtl_fm and pipe to multimon-ng for RDS decoding.
+
+    The Debian/Ubuntu package of multimon-ng (≤1.3.x) does **not** include the
+    RDS demodulator — it was never part of the upstream release.  We probe the
+    available modes at startup and skip gracefully if RDS is absent rather than
+    spawning a pipeline that exits immediately with "invalid mode".
+    """
     import json
     import redis
 
     r = redis.from_url(settings.REDIS_URL)
+
+    supported = _multimon_supported_modes()
+    if "RDS" not in supported:
+        logger.warning(
+            "multimon-ng on this system does not support RDS "
+            "(available: %s). Skipping RDS pipeline for connector %s. "
+            "Install a multimon-ng build with RDS support to enable this feature.",
+            ", ".join(sorted(supported)) or "<none>",
+            connector_id,
+        )
+        return
 
     rtl_cmd = [
         "rtl_fm", "-d", settings.rtl_tcp_device, "-f", str(frequency_hz), "-M", "fm",

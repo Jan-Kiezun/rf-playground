@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,6 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import connectors, data, audio, scheduler, device
 from app.db.database import engine, Base
 from app.ws.live import router as ws_router
+
+# Ensure application-level loggers (app.*) emit INFO and above.
+# Uvicorn only configures its own loggers; without this the root logger
+# defaults to WARNING and swallows all our pipeline progress messages.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:     %(name)s - %(message)s")
 
 
 @asynccontextmanager
