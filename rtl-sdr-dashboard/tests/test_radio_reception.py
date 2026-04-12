@@ -297,7 +297,7 @@ def test_rds_decoding_rmf_fm():
         "-E", "deemp",
         "-",
     ]
-    mm_cmd = ["multimon-ng", "-t", "raw", "-a", "RDS", "-"]
+    mm_cmd = ["multimon-ng", "-t", "raw", "-a", "RDS", "/dev/stdin"]
 
     try:
         rtl_proc = subprocess.Popen(
